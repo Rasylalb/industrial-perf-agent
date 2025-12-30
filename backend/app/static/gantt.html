@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mini Scheduler — Gantt + Orders</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 16px; color:#111; }
+    h1 { margin: 0 0 8px; }
+    h2 { margin: 16px 0 8px; font-size: 16px; }
+    .muted { color: #555; font-size: 12px; }
+    .controls { display: flex; gap: 10px; align-items: center; margin: 10px 0 12px; flex-wrap: wrap; }
+    button { padding: 8px 10px; border-radius: 10px; border: 1px solid #ddd; background: #fff; cursor: pointer; }
+    button:hover { background: #f3f3f3; }
+    .warn { color: #b45309; font-size: 12px; }
+    .ok { color: #15803d; font-size: 12px; }
+    .err { color: #b91c1c; font-size: 12px; }
+    .card {
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 12px;
+      background: #fff;
+      margin: 12px 0;
+    }
+    .grid2 { display: grid; grid-template-columns: 1.2fr 1fr; gap: 12px; align-items: start; }
+    @media (max-width: 980px){ .grid2 { grid-template-columns: 1fr; } }
+
+    /* Orders table */
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #eee; padding: 8px; font-size: 12px; text-align: left; }
+    th { background: #fafafa; position: sticky; top: 0; z-index: 1; }
+    .tableWrap { max-height: 280px; overflow:auto; border: 1px solid #eee; border-radius: 10px; }
+    input, select {
+      font-size: 12px;
+      padding: 6px 8px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .btnSmall { padding: 6px 8px; border-radius: 10px; font-size: 12px; }
+    .rowActions { display:flex; gap:6px; align-items:center; }
+    .pill {
+      display:inline-flex; align-items:center; gap:8px;
+      padding: 8px 10px; border-radius: 999px; border: 1px solid #e5e7eb;
+      background:#fafafa; font-size:12px;
+    }
+    .pill strong { font-weight: 800; }
+    .checkbox { display:flex; align-items:center; gap:8px; font-size:12px; color:#333; }
+    .checkbox input { width: auto; }
+
+    /* Gantt */
+    .row { margin: 18px 0; }
+    .label { font-weight: 700; margin-bottom: 6px; display:flex; align-items:center; gap:8px; }
+    .lane {
+      position: relative;
+      height: 44px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fafafa;
+    }
+    .bar {
+      position: absolute;
+      top: 6px;
+      height: 32px;
+      border-radius: 8px;
+      padding: 6px 8px;
+      box-sizing: border-box;
+      font-size: 12px;
+      color: #111;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .meta { color: #555; font-size: 12px; margin-top: 6px; }
+
+    /* Legend scroll */
+    .legend {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      padding-bottom: 6px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      white-space: nowrap;
+    }
+    .legend::-webkit-scrollbar { height: 8px; }
+    .legend::-webkit-scrollbar-thumb { background: #ddd; border-radius: 999px; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      color: #111;
+      user-select: none;
+      flex: 0 0 auto;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(0,0,0,0.25);
+      display: inline-block;
+      flex: 0 0 auto;
+    }
+
+    /* ✅ Bottleneck highlight */
+    .bnBadge {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(239, 68, 68, 0.6);
+      background: rgba(239, 68, 68, 0.12);
+      color: #b91c1c;
+      font-weight: 800;
+    }
+    .bnLane {
+      border: 2px solid rgba(239, 68, 68, 0.55) !important;
+      background: rgba(239, 68, 68, 0.06) !important;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Mini Scheduler — Gantt + Ordres</h1>
+  <div class="controls">
+    <button id="btnPlan">Planifier</button>
+    <button id="btnReplan">Replanifier</button>
+    <button id="btnRefreshAll">Tout rafraîchir</button>
+    <label class="checkbox">
+      <input id="autoReplan" type="checkbox" checked />
+      Auto replan après un PATCH
+    </label>
+    <span id="msg" class="warn"></span>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h2>Ordres (Orders) — édition rapide</h2>
+      <div class="muted">Modifie puis clique <b>Enregistrer</b>. Si “Auto replan” est activé, le Gantt se recalculera automatiquement.</div>
+      <div class="tableWrap" style="margin-top:10px;">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Due date</th>
+              <th>Priority</th>
+              <th>Qty</th>
+              <th>Release</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="ordersBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Diagnostic</h2>
+      <div id="bnBox" class="pill">
+        <span>Goulot :</span>
+        <strong id="bnName">—</strong>
+        <span class="muted">score</span>
+        <strong id="bnScore">—</strong>
+        <span class="muted">(fenêtre: <span id="bnWin">—</span>)</span>
+      </div>
+      <div class="muted" style="margin-top:10px;">
+        Le goulot est détecté via <code>/metrics/bottleneck</code> et la ligne correspondante est surlignée dans le Gantt.
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Gantt — Ordonnancement V1</h2>
+    <div id="gantt"></div>
+  </div>
+
+  <script>
+    const API = ""; // same origin
+    const lanes = ["R1", "R2", "R3"];
+    const laneNames = { R1: "Impression (R1)", R2: "Découpe (R2)", R3: "Pliage/Collage (R3)" };
+
+    // -----------------------
+    // Helpers
+    // -----------------------
+    function isoToMs(s) { return new Date(s).getTime(); }
+
+    function fmtDate(iso) {
+      const d = new Date(iso);
+      return d.toLocaleString();
+    }
+
+    // input[type=datetime-local] expects "YYYY-MM-DDTHH:mm"
+    function isoToLocalInput(iso) {
+      if (!iso) return "";
+      const d = new Date(iso);
+      const pad = (n) => String(n).padStart(2, "0");
+      const yyyy = d.getFullYear();
+      const mm = pad(d.getMonth() + 1);
+      const dd = pad(d.getDate());
+      const hh = pad(d.getHours());
+      const mi = pad(d.getMinutes());
+      return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+    }
+
+    // convert datetime-local to ISO string
+    function localInputToIso(v) {
+      if (!v) return null;
+      const d = new Date(v);
+      return d.toISOString();
+    }
+
+    function fmtDurationMinutes(mins) {
+      const m = Math.round(mins);
+      const h = Math.floor(m / 60);
+      const r = m % 60;
+      if (h <= 0) return `${r} min`;
+      if (r === 0) return `${h} h`;
+      return `${h} h ${r} min`;
+    }
+
+    function setMsg(text, cls="warn") {
+      const el = document.getElementById("msg");
+      el.className = cls;
+      el.textContent = text || "";
+      if (text) setTimeout(() => { el.textContent = ""; el.className = "warn"; }, 3500);
+    }
+
+    async function apiGet(path) {
+      const r = await fetch(API + path);
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+
+    async function apiPost(path) {
+      const r = await fetch(API + path, { method: "POST" });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+
+    async function apiPatch(path, payload) {
+      const r = await fetch(API + path, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+
+    // -----------------------
+    // Colors
+    // -----------------------
+    const PALETTE = [
+      { fill: "rgba(37, 99, 235, 0.28)", border: "rgba(37, 99, 235, 0.85)" },
+      { fill: "rgba(16, 185, 129, 0.28)", border: "rgba(16, 185, 129, 0.85)" },
+      { fill: "rgba(245, 158, 11, 0.28)", border: "rgba(245, 158, 11, 0.90)" },
+      { fill: "rgba(239, 68, 68, 0.24)", border: "rgba(239, 68, 68, 0.85)" },
+      { fill: "rgba(139, 92, 246, 0.26)", border: "rgba(139, 92, 246, 0.85)" },
+      { fill: "rgba(14, 165, 233, 0.26)", border: "rgba(14, 165, 233, 0.85)" },
+      { fill: "rgba(236, 72, 153, 0.24)", border: "rgba(236, 72, 153, 0.85)" },
+      { fill: "rgba(34, 197, 94, 0.24)", border: "rgba(34, 197, 94, 0.85)" },
+      { fill: "rgba(168, 85, 247, 0.22)", border: "rgba(168, 85, 247, 0.85)" },
+      { fill: "rgba(249, 115, 22, 0.24)", border: "rgba(249, 115, 22, 0.90)" },
+      { fill: "rgba(20, 184, 166, 0.24)", border: "rgba(20, 184, 166, 0.85)" },
+      { fill: "rgba(100, 116, 139, 0.20)", border: "rgba(100, 116, 139, 0.85)" }
+    ];
+
+    function hashOrderId(orderId) {
+      let h = 0;
+      for (let i = 0; i < orderId.length; i++) h = (h * 31 + orderId.charCodeAt(i)) >>> 0;
+      return h;
+    }
+
+    function colorForOrder(orderId) {
+      const idx = hashOrderId(orderId) % PALETTE.length;
+      return PALETTE[idx];
+    }
+
+    // -----------------------
+    // Bottleneck (global state)
+    // -----------------------
+    let BOTTLENECK_RESOURCE_ID = null; // e.g. "R3"
+    let BOTTLENECK_NAME = null;
+    let BOTTLENECK_SCORE = null;
+    let BOTTLENECK_WINDOW = null;
+
+    async function loadBottleneck(hours=6) {
+      const data = await apiGet(`/metrics/bottleneck?hours=${hours}`);
+      BOTTLENECK_RESOURCE_ID = data?.bottleneck?.resource_id ?? null;
+      BOTTLENECK_NAME = data?.bottleneck?.name ?? null;
+      BOTTLENECK_SCORE = data?.bottleneck?.score ?? null;
+
+      const w = data?.window;
+      BOTTLENECK_WINDOW = w ? `${new Date(w.start).toLocaleString()} → ${new Date(w.end).toLocaleString()}` : null;
+
+      document.getElementById("bnName").textContent = BOTTLENECK_NAME || "—";
+      document.getElementById("bnScore").textContent =
+        (typeof BOTTLENECK_SCORE === "number") ? BOTTLENECK_SCORE.toFixed(3) : "—";
+      document.getElementById("bnWin").textContent = BOTTLENECK_WINDOW || "—";
+    }
+
+    // -----------------------
+    // Orders table
+    // -----------------------
+    function renderOrders(orders) {
+      const body = document.getElementById("ordersBody");
+      body.innerHTML = "";
+
+      for (const o of orders) {
+        const tr = document.createElement("tr");
+
+        const tdId = document.createElement("td");
+        tdId.textContent = o.id;
+        tr.appendChild(tdId);
+
+        const tdDue = document.createElement("td");
+        const due = document.createElement("input");
+        due.type = "datetime-local";
+        due.value = isoToLocalInput(o.due_date);
+        due.dataset.field = "due_date";
+        tdDue.appendChild(due);
+        tr.appendChild(tdDue);
+
+        const tdPr = document.createElement("td");
+        const pr = document.createElement("input");
+        pr.type = "number";
+        pr.min = "1";
+        pr.max = "10";
+        pr.value = o.priority;
+        pr.dataset.field = "priority";
+        tdPr.appendChild(pr);
+        tr.appendChild(tdPr);
+
+        const tdQty = document.createElement("td");
+        const qty = document.createElement("input");
+        qty.type = "number";
+        qty.min = "1";
+        qty.value = o.quantity;
+        qty.dataset.field = "quantity";
+        tdQty.appendChild(qty);
+        tr.appendChild(tdQty);
+
+        const tdRel = document.createElement("td");
+        const rel = document.createElement("input");
+        rel.type = "datetime-local";
+        rel.value = isoToLocalInput(o.release_date);
+        rel.dataset.field = "release_date";
+        tdRel.appendChild(rel);
+        tr.appendChild(tdRel);
+
+        const tdAct = document.createElement("td");
+        const wrap = document.createElement("div");
+        wrap.className = "rowActions";
+
+        const btnSave = document.createElement("button");
+        btnSave.className = "btnSmall";
+        btnSave.textContent = "Enregistrer";
+        btnSave.addEventListener("click", async () => {
+          try {
+            btnSave.disabled = true;
+
+            const payload = {
+              due_date: localInputToIso(due.value),
+              priority: Number(pr.value),
+              quantity: Number(qty.value),
+              release_date: localInputToIso(rel.value),
+            };
+
+            // Important: if release_date is empty, keep it null
+            if (!rel.value) payload.release_date = null;
+
+            await apiPatch(`/orders/${o.id}`, payload);
+
+            // Auto replan if checked
+            if (document.getElementById("autoReplan").checked) {
+              await apiPost("/schedule/replan");
+              await refreshSchedule();
+            }
+
+            setMsg(`Order ${o.id} sauvegardé ✅`, "ok");
+          } catch (e) {
+            setMsg("Erreur PATCH: " + e.message, "err");
+          } finally {
+            btnSave.disabled = false;
+          }
+        });
+
+        wrap.appendChild(btnSave);
+        tdAct.appendChild(wrap);
+        tr.appendChild(tdAct);
+
+        body.appendChild(tr);
+      }
+    }
+
+    async function loadOrders() {
+      const orders = await apiGet("/orders");
+      renderOrders(orders);
+    }
+
+    // -----------------------
+    // Gantt
+    // -----------------------
+    function groupByResource(ops) {
+      const g = {};
+      for (const op of ops) {
+        if (!g[op.resource_id]) g[op.resource_id] = [];
+        g[op.resource_id].push(op);
+      }
+      for (const k of Object.keys(g)) {
+        g[k].sort((a,b) => isoToMs(a.start_ts) - isoToMs(b.start_ts));
+      }
+      return g;
+    }
+
+    function computeWindow(ops) {
+      let min = Infinity, max = -Infinity;
+      for (const op of ops) {
+        min = Math.min(min, isoToMs(op.start_ts));
+        max = Math.max(max, isoToMs(op.end_ts));
+      }
+      if (!isFinite(min) || !isFinite(max) || max <= min) {
+        const now = Date.now();
+        return { start: now, end: now + 3600_000 };
+      }
+      return { start: min, end: max };
+    }
+
+    function renderGantt(ops) {
+      const root = document.getElementById("gantt");
+      root.innerHTML = "";
+
+      if (!ops || ops.length === 0) {
+        root.innerHTML = "<p>Aucun planning. Clique sur <b>Planifier</b>.</p>";
+        return;
+      }
+
+      const grouped = groupByResource(ops);
+      const win = computeWindow(ops);
+      const total = win.end - win.start;
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = `Fenêtre: ${new Date(win.start).toLocaleString()} → ${new Date(win.end).toLocaleString()}`;
+      root.appendChild(meta);
+
+      // Legend
+      const orders = Array.from(new Set(ops.map(o => o.order_id))).sort();
+      const legend = document.createElement("div");
+      legend.className = "legend";
+
+      for (const oid of orders) {
+        const col = colorForOrder(oid);
+
+        const chip = document.createElement("span");
+        chip.className = "chip";
+        chip.style.background = col.fill;
+        chip.style.border = `1px solid ${col.border}`;
+
+        const dot = document.createElement("span");
+        dot.className = "dot";
+        dot.style.background = col.border;
+
+        const txt = document.createElement("span");
+        txt.textContent = oid;
+
+        chip.appendChild(dot);
+        chip.appendChild(txt);
+        legend.appendChild(chip);
+      }
+      root.appendChild(legend);
+
+      for (const rid of lanes) {
+        const row = document.createElement("div");
+        row.className = "row";
+
+        const label = document.createElement("div");
+        label.className = "label";
+        label.textContent = laneNames[rid] || rid;
+
+        // ✅ Bottleneck badge on label
+        if (BOTTLENECK_RESOURCE_ID && rid === BOTTLENECK_RESOURCE_ID) {
+          const badge = document.createElement("span");
+          badge.className = "bnBadge";
+          badge.textContent = "GOULOT";
+          label.appendChild(badge);
+        }
+
+        const lane = document.createElement("div");
+        lane.className = "lane";
+
+        // ✅ Bottleneck lane highlight
+        if (BOTTLENECK_RESOURCE_ID && rid === BOTTLENECK_RESOURCE_ID) {
+          lane.classList.add("bnLane");
+        }
+
+        const opsLane = grouped[rid] || [];
+        for (const op of opsLane) {
+          const s = isoToMs(op.start_ts);
+          const e = isoToMs(op.end_ts);
+
+          const left = ((s - win.start) / total) * 100;
+          const width = Math.max(0.5, ((e - s) / total) * 100);
+
+          const durMin = (e - s) / 60000.0;
+          const durText = fmtDurationMinutes(durMin);
+
+          const bar = document.createElement("div");
+          bar.className = "bar";
+          bar.style.left = `${left}%`;
+          bar.style.width = `${width}%`;
+
+          const col = colorForOrder(op.order_id);
+          bar.style.background = col.fill;
+          bar.style.border = `1px solid ${col.border}`;
+
+          // Duration on bar
+          bar.textContent = `${op.order_id} (S${op.step_seq}) • ${durText}`;
+
+          // Tooltip pro
+          bar.title =
+            `Commande: ${op.order_id}\n` +
+            `Étape: S${op.step_seq}  |  Ressource: ${op.resource_id}\n` +
+            `Début: ${fmtDate(op.start_ts)}\n` +
+            `Fin:   ${fmtDate(op.end_ts)}\n` +
+            `Durée: ${durText}\n` +
+            `Qté:   ${op.quantity}`;
+
+          lane.appendChild(bar);
+        }
+
+        row.appendChild(label);
+        row.appendChild(lane);
+        root.appendChild(row);
+      }
+    }
+
+    async function refreshSchedule() {
+      const data = await apiGet("/schedule");
+      renderGantt(data.ops);
+    }
+
+    // -----------------------
+    // Buttons
+    // -----------------------
+    document.getElementById("btnPlan").addEventListener("click", async () => {
+      try {
+        setMsg("Planification...", "warn");
+        await apiPost("/schedule/plan");
+        await refreshAll();
+        setMsg("Planifié ✅", "ok");
+      } catch (e) {
+        setMsg("Erreur: " + e.message, "err");
+      }
+    });
+
+    document.getElementById("btnReplan").addEventListener("click", async () => {
+      try {
+        setMsg("Replanification...", "warn");
+        await apiPost("/schedule/replan");
+        await refreshAll();
+        setMsg("Replanifié ✅", "ok");
+      } catch (e) {
+        setMsg("Erreur: " + e.message, "err");
+      }
+    });
+
+    document.getElementById("btnRefreshAll").addEventListener("click", async () => {
+      try {
+        setMsg("Rafraîchissement...", "warn");
+        await refreshAll();
+        setMsg("À jour ✅", "ok");
+      } catch (e) {
+        setMsg("Erreur: " + e.message, "err");
+      }
+    });
+
+    // -----------------------
+    // One call to refresh everything
+    // -----------------------
+    async function refreshAll() {
+      await Promise.all([
+        loadBottleneck(6),
+        loadOrders(),
+        refreshSchedule()
+      ]);
+    }
+
+    // initial load
+    refreshAll().catch(() => {});
+  </script>
+</body>
+</html>

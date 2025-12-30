@@ -1,25 +1,29 @@
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from .db import get_db
 from . import models
 from .schemas import PatchOrder, ResourceOut, SalesOrderOut, RoutingOut
+
 from .services.oee import compute_oee
 from .services.bottleneck import detect_bottleneck_v1
+from .services.scheduler import plan_schedule, persist_schedule
 
-app = FastAPI(title="Industrial Perf Agent (V1)", version="0.2.0")
+app = FastAPI(title="Industrial Perf Agent (V1)", version="0.4.0")
 
 
 @app.get("/")
 def root():
-    return {"message": "API running. Go to /docs"}
+    return {"message": "API running. Go to /docs or /ui/gantt"}
 
 
-# -------------------------
+# ============================================================
 # Reference / Orders
-# -------------------------
+# ============================================================
 
 @app.get("/resources", response_model=list[ResourceOut])
 def list_resources(db: Session = Depends(get_db)):
@@ -82,16 +86,12 @@ def get_routings(family_id: str, db: Session = Depends(get_db)):
     return out
 
 
-# -------------------------
-# Metrics: OEE
-# -------------------------
+# ============================================================
+# Metrics — OEE
+# ============================================================
 
 @app.get("/metrics/oee")
 def oee_single(resource_id: str, hours: int = 6, db: Session = Depends(get_db)):
-    """
-    Compute OEE on the last N hours for one resource.
-    Example: /metrics/oee?resource_id=R2&hours=4
-    """
     end = datetime.now().replace(tzinfo=None)
     start = end - timedelta(hours=hours)
 
@@ -112,10 +112,6 @@ def oee_single(resource_id: str, hours: int = 6, db: Session = Depends(get_db)):
 
 @app.get("/metrics/oee/overview")
 def oee_overview(hours: int = 6, db: Session = Depends(get_db)):
-    """
-    Compute OEE on the last N hours for all resources.
-    Example: /metrics/oee/overview?hours=6
-    """
     end = datetime.now().replace(tzinfo=None)
     start = end - timedelta(hours=hours)
 
@@ -137,16 +133,12 @@ def oee_overview(hours: int = 6, db: Session = Depends(get_db)):
     return {"window": {"start": start, "end": end}, "items": items}
 
 
-# -------------------------
-# Metrics: Bottleneck (V1)
-# -------------------------
+# ============================================================
+# Metrics — Bottleneck
+# ============================================================
 
 @app.get("/metrics/bottleneck")
 def bottleneck(hours: int = 6, db: Session = Depends(get_db)):
-    """
-    V1 bottleneck pre-diagnostic on the last N hours.
-    Example: /metrics/bottleneck?hours=6
-    """
     end = datetime.now().replace(tzinfo=None)
     start = end - timedelta(hours=hours)
 
@@ -161,3 +153,59 @@ def bottleneck(hours: int = 6, db: Session = Depends(get_db)):
         "explain": res.explain,
         "ranking": res.ranking,
     }
+
+
+# ============================================================
+# Scheduling — Plan / Get / Replan
+# ============================================================
+
+@app.post("/schedule/plan")
+def schedule_plan(db: Session = Depends(get_db)):
+    now = datetime.now().replace(tzinfo=None)
+    plan = plan_schedule(db, now=now)
+    saved = persist_schedule(db, plan)
+    return {
+        "status": saved["status"],
+        "ops_count": saved["ops_count"],
+        "plan": {"generated_at": plan["generated_at"], "lateness": plan["lateness"]},
+    }
+
+
+@app.get("/schedule")
+def get_schedule(db: Session = Depends(get_db)):
+    ops = db.query(models.ScheduledOp).order_by(models.ScheduledOp.start_ts.asc()).all()
+    return {
+        "ops": [
+            {
+                "order_id": o.order_id,
+                "resource_id": o.resource_id,
+                "step_seq": o.step_seq,
+                "start_ts": o.start_ts,
+                "end_ts": o.end_ts,
+                "quantity": o.quantity,
+            }
+            for o in ops
+        ]
+    }
+
+
+@app.post("/schedule/replan")
+def schedule_replan(db: Session = Depends(get_db)):
+    now = datetime.now().replace(tzinfo=None)
+    plan = plan_schedule(db, now=now)
+    saved = persist_schedule(db, plan)
+    return {
+        "status": saved["status"],
+        "ops_count": saved["ops_count"],
+        "plan": {"generated_at": plan["generated_at"], "lateness": plan["lateness"]},
+    }
+
+
+# ============================================================
+# UI — Gantt
+# ============================================================
+
+@app.get("/ui/gantt", response_class=HTMLResponse)
+def ui_gantt():
+    html_path = Path(__file__).parent / "static" / "gantt.html"
+    return html_path.read_text(encoding="utf-8")

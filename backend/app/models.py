@@ -91,3 +91,21 @@ class MachineState(Base):
 
     state = Column(String, nullable=False)  # RUN/STOP/IDLE/SETUP
     reason_code = Column(String, nullable=True)  # if STOP
+    
+class ScheduledOp(Base):
+    __tablename__ = "scheduled_ops"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    order_id = Column(String, ForeignKey("sales_orders.id"), nullable=False)
+
+    routing_id = Column(String, ForeignKey("routings.id"), nullable=False)
+    step_seq = Column(Integer, nullable=False)
+
+    resource_id = Column(String, ForeignKey("resources.id"), nullable=False)
+
+    start_ts = Column(DateTime, nullable=False)
+    end_ts = Column(DateTime, nullable=False)
+
+    setup_min = Column(Integer, default=0, nullable=False)
+    run_min_per_unit = Column(Float, default=0.0, nullable=False)
+    quantity = Column(Integer, nullable=False)

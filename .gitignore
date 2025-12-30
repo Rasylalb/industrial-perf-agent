@@ -205,3 +205,14 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+# --- Project specific (Industrial Perf Agent) ---
+
+# Local SQLite databases
+*.db
+*.db-journal
+
+# FastAPI / Uvicorn
+*.log
+
+# Local virtual environments
+.venv/
